@@ -12,33 +12,38 @@ from .views import (
 app_name = "projects"
 
 urlpatterns = [
-    # Projetos
-    path("", ProjectListCreateView.as_view(), name="project-list-create"),
-    path("<int:pk>/", ProjectDetailView.as_view(), name="project-detail"),
-    # Desenvolvedores do Projeto
+    # Rotas de Projetos
+    path("projects/", ProjectListCreateView.as_view(), name="project-list-create"),
+    path("projects/<int:pk>/", ProjectDetailView.as_view(), name="project-detail"),
+    # Rotas de Desenvolvedores do Projeto
     path(
-        "<int:project_id>/developers/",
+        "projects/<int:project_id>/developers/",
         ProjectDeveloperListView.as_view(),
         name="project-developer-list",
     ),
     path(
-        "<int:project_id>/developers/add/",
+        "projects/<int:project_id>/developers/add/",
         ProjectDeveloperCreateView.as_view(),
         name="project-developer-create",
     ),
     path(
-        "<int:project_id>/developers/<int:pk>/",
+        "projects/<int:project_id>/developers/<int:pk>/",
         ProjectDeveloperDetailView.as_view(),
         name="project-developer-detail",
-    ),
-    # Stacks do Projeto
+    ),  # PK por id da alocação
     path(
-        "<int:project_id>/stacks/",
+        "projects/<int:project_id>/developers/by-developer/<int:developer>/",
+        ProjectDeveloperDetailView.as_view(),
+        name="project-developer-by-developer",
+    ),  # PK por id do dev
+    # Rotas de Stacks do Projeto
+    path(
+        "projects/<int:project_id>/stacks/",
         ProjectStackListView.as_view(),
         name="project-stack-list",
     ),
     path(
-        "<int:project_id>/stacks/add/",
+        "projects/<int:project_id>/stacks/add/",
         ProjectStackCreateView.as_view(),
         name="project-stack-create",
     ),

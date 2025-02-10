@@ -28,6 +28,7 @@ urlpatterns = [
     # URLs do nosso app users
     path("api/", include("users.urls")),
     path("api/", include("stacks.urls")),
+    path("api/", include("projects.urls")),
     # URLs para a documentação da API
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(

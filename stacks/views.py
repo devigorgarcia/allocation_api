@@ -53,12 +53,6 @@ class UserStackDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class AddUserStackView(generics.CreateAPIView):
-
-    serializer_class = AddUserStackSerializer
-    permission_classes = [IsAuthenticated]
-
-
-class AddUserStackView(generics.CreateAPIView):
     serializer_class = AddUserStackSerializer
     permission_classes = [IsAuthenticated]
 
@@ -77,7 +71,7 @@ class AddUserStackView(generics.CreateAPIView):
             # Se for dev, ignora qualquer usuário especificado e usa ele mesmo
             target_user = user
 
-        serializer.save(user=target_user)
+        return serializer.save(user=target_user)
 
     def create(self, request, *args, **kwargs):
         """
@@ -87,16 +81,20 @@ class AddUserStackView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        instance = self.perform_create(serializer)
+
         current_user = request.user
-        target_user = serializer.validated_data.get("user", current_user)
+        target_user = instance.user
 
         if current_user == target_user:
             message = "Stack adicionada com sucesso ao seu perfil!"
         else:
             message = f"Stack adicionada com sucesso ao perfil de {target_user.email}!"
 
-        if serializer.validated_data.get("is_primary"):
+        if instance.is_primary:
             message += " (Definida como stack primária)"
+
+        headers = self.get_success_headers(serializer.data)
 
         return Response(
             {
@@ -109,4 +107,5 @@ class AddUserStackView(generics.CreateAPIView):
                 },
             },
             status=status.HTTP_201_CREATED,
+            headers=headers,
         )
