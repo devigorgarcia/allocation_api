@@ -1,5 +1,4 @@
 from rest_framework import serializers
-
 from users.models import User
 from .models import Stack, UserStack
 
@@ -38,12 +37,8 @@ class AddUserStackSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
         required=False,
+        default=serializers.CurrentUserDefault(),
         help_text="ID do usuário que receberá a stack (apenas para admin/TL)",
-    )
-
-    stack = serializers.PrimaryKeyRelatedField(
-        queryset=Stack.objects.filter(is_active=True),
-        help_text="ID da stack que será associada ao usuário",
     )
 
     class Meta:
@@ -59,45 +54,30 @@ class AddUserStackSerializer(serializers.ModelSerializer):
         read_only_fields = ["stack_name"]
 
     def validate(self, data):
-
         request = self.context["request"]
         current_user = request.user
+
+        if not (current_user.is_staff or current_user.is_tech_leader()):
+            data["user"] = current_user
+
         target_user = data.get("user", current_user)
         stack = data["stack"]
 
-        # Verifica permissões do usuário atual
-        if not (current_user.is_staff or current_user.is_tech_leader()):
-            if "user" in self.initial_data and target_user != current_user:
-                raise serializers.ValidationError(
-                    {
-                        "user": "Desenvolvedores só podem adicionar stacks ao próprio perfil."
-                    }
-                )
-
-        # Verifica se o usuário já tem esta stack
-        existing_stack = UserStack.objects.filter(user=target_user, stack=stack).first()
-
-        if existing_stack:
+        if UserStack.objects.filter(user=target_user, stack=stack).exists():
             raise serializers.ValidationError(
                 {
-                    "stack": (
-                        f"O usuário {target_user.email} já possui a stack {stack.name} "
-                        f"com nível {existing_stack.get_proficiency_level_display()}"
-                    )
+                    "non_field_errors": [
+                        f"O usuário {target_user.email} já possui a stack {stack.name} com nível já atribuído."
+                    ]
                 }
             )
 
-        # Verifica regras para stack primária
         if data.get("is_primary"):
-            existing_primary = UserStack.objects.filter(
-                user=target_user, is_primary=True
-            ).exists()
-            if existing_primary:
+            if UserStack.objects.filter(user=target_user, is_primary=True).exists():
                 raise serializers.ValidationError(
                     {
                         "is_primary": (
-                            f"O usuário {target_user.email} já possui uma stack primária. "
-                            "Desmarque-a primeiro."
+                            f"O usuário {target_user.email} já possui uma stack primária. Desmarque-a primeiro."
                         )
                     }
                 )

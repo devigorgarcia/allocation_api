@@ -1,3 +1,4 @@
+from datetime import timedelta
 from django.utils import timezone
 from django.db import models
 from rest_framework import serializers
@@ -22,14 +23,17 @@ class ProjectStackSerializer(serializers.ModelSerializer):
     def validate(self, data):
         project = self.context.get("project")
         if not project:
-            return data
-
-        # Validar se o Tech Leader tem a stack que está sendo adicionada
-        if not project.tech_leader.user_stacks.filter(stack=data["stack"]).exists():
             raise serializers.ValidationError(
-                {"stack": f"O Tech Leader não possui a stack {data['stack'].name}"}
+                {"project": "Project must be specified in serializer context"}
             )
 
+        data["project"] = project
+        if not project.tech_leader.user_stacks.filter(stack=data.get("stack")).exists():
+            raise serializers.ValidationError(
+                {
+                    "stack": "Tech Leader não possui a stack necessária para este projeto."
+                }
+            )
         return data
 
 
@@ -66,10 +70,9 @@ class ProjectDeveloperSerializer(serializers.ModelSerializer):
         """
         data = super().validate(data)
 
-        project = self.context.get("project")
-
-        if not project:
-            project = getattr(self.instance, "project", None)
+        project = self.context.get("project") or (
+            self.instance and self.instance.project
+        )
 
         if not project:
             raise serializers.ValidationError(
@@ -77,6 +80,24 @@ class ProjectDeveloperSerializer(serializers.ModelSerializer):
                     "project": "Erro interno: Projeto não encontrado no contexto do serializer"
                 }
             )
+
+        data["project"] = project
+
+        if self.instance:
+            data["developer"] = data.get("developer", self.instance.developer)
+            data["stack"] = data.get("stack", self.instance.stack)
+            data["start_date"] = data.get("start_date", self.instance.start_date)
+            data["end_date"] = data.get("end_date", self.instance.end_date)
+            data["hours_per_month"] = data.get(
+                "hours_per_month", self.instance.hours_per_month
+            )
+        else:
+            # Se for criação, define valores default para os campos ausentes
+            data.setdefault("start_date", timezone.localdate())
+            from datetime import timedelta
+
+            data.setdefault("end_date", timezone.localdate() + timedelta(days=30))
+            data.setdefault("hours_per_month", 0)
 
         try:
             validator = ProjectDeveloperValidator(self.instance, project)

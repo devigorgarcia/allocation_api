@@ -1,6 +1,6 @@
-from rest_framework import serializers, status
-from rest_framework.response import Response
+from rest_framework import serializers
 from django.utils import timezone
+from .models import ProjectChangeLog
 
 
 class ProjectPermissionMixin:
@@ -65,13 +65,14 @@ class ProjectAuditMixin:
             action: Tipo de ação realizada
             user: Usuário que realizou a ação
         """
-        from .models import ProjectChangeLog
+
+        project = project.project if hasattr(project, "project") else project
 
         ProjectChangeLog.objects.create(
-            project=project,
+            project=project,  # agora é um objeto Project
             action=action,
             user=user,
-            description=f"Projeto {action} por {user.email}",
+            description=f"{project.name} foi {action} por {user.email}",
         )
 
 

@@ -93,15 +93,13 @@ class ProjectDeveloperValidator:
         return True, None
 
     def validate_dates(self, start_date, end_date):
-        """
-        Valida as datas de início e fim da alocação.
-        """
         if start_date > end_date:
             return False, {
                 "end_date": "A data de término deve ser posterior à data de início"
             }
 
-        if start_date < timezone.localdate():
+        # Se for criação (não existe self.instance), validar a data de início
+        if not self.instance and start_date < timezone.localdate():
             return False, {"start_date": "A data de início não pode ser no passado"}
 
         return True, None
@@ -135,6 +133,12 @@ class ProjectDeveloperValidator:
         """
         Verifica a disponibilidade de horas do desenvolvedor.
         """
+        if not developer:
+            return False, {"developer": "Developer is required"}
+
+        if hours_per_month is None:
+            hours_per_month = 0
+
         overlapping_allocations = ProjectDeveloper.objects.filter(
             developer=developer, start_date__lte=end_date, end_date__gte=start_date
         )

@@ -1,4 +1,3 @@
-# users/tests/test_permissions.py
 from django.test import TestCase, RequestFactory
 from users.models import User
 from users.permissions import IsTechLeaderOrSelf

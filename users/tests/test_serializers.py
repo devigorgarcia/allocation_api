@@ -1,4 +1,3 @@
-# users/tests/test_serializers.py
 from django.test import TestCase
 from users.serializers import UserSerializer, UserDetailSerializer
 from users.models import User

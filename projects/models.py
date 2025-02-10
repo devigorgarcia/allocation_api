@@ -1,4 +1,5 @@
-from datetime import date
+from django.utils import timezone
+from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 from django.db import models
 from django.core.exceptions import ValidationError
@@ -78,8 +79,9 @@ class Project(AuditableMixin):
             )
         project_stack = set(self.stacks.all())
         tl_stacks = set(
-            self.tech_leader.user_stacks.all().value_list("stack", flat=True)
+            self.tech_leader.user_stacks.all().values_list("stack", flat=True)
         )
+
         missing_stacks = project_stack - tl_stacks
         if missing_stacks:
             raise ProjectValidationError(
@@ -89,6 +91,10 @@ class Project(AuditableMixin):
                 },
                 code="insufficient_tl_stacks",
             )
+
+
+def default_end_date():
+    return timezone.localdate() + timedelta(days=30)
 
 
 class ProjectDeveloper(AuditableMixin):
@@ -111,6 +117,7 @@ class ProjectDeveloper(AuditableMixin):
     hours_per_month = models.PositiveIntegerField(
         verbose_name="Horas por mês",
         help_text="Quantidade de horas mensais que o desenvolvedor dedicará ao projeto",
+        default=0,
     )
     stack = models.ForeignKey(
         Stack,
@@ -119,10 +126,12 @@ class ProjectDeveloper(AuditableMixin):
         help_text="Stack que o desenvolvedor utilizará neste projeto",
     )
     start_date = models.DateField(
-        help_text="Data de início da alocação do desenvolvedor no projeto"
+        help_text="Data de início da alocação do desenvolvedor no projeto",
+        default=timezone.localdate,
     )
     end_date = models.DateField(
-        help_text="Data de término prevista para a alocação do desenvolvedor"
+        help_text="Data de término prevista para a alocação do desenvolvedor",
+        default=default_end_date,
     )
 
     def verify_developer_availability(self):
@@ -170,6 +179,9 @@ class ProjectDeveloper(AuditableMixin):
     def clean(self):
         from django.core.exceptions import ValidationError
 
+        if self.hours_per_month is None:
+            self.hours_per_month = 0
+
         if self.start_date > self.end_date:
             raise ValidationError(
                 {"end_date": "A data de término deve ser posterior à data de início"}
@@ -178,6 +190,12 @@ class ProjectDeveloper(AuditableMixin):
             raise ValidationError(
                 {"start_date": "A data de início não pode ser no passado"}
             )
+
+        if not self.pk and self.start_date < date.today():
+            raise ValidationError(
+                {"start_date": "A data de início não pode ser no passado"}
+            )
+
         if not self.developer.user_stacks.filter(stack=self.stack).exists():
             raise ValidationError(
                 {"stack": f"O desenvolvedor não possui a stack {self.stack.name}"}
@@ -185,7 +203,9 @@ class ProjectDeveloper(AuditableMixin):
         is_available, message = self.verify_developer_availability()
         if not is_available:
             raise ValidationError({"hours_per_month": message})
-        project_stack = self.project.projectstack_set.filter(stack=self.stack).first()
+        project_stack = ProjectStack.objects.filter(
+            project_id=self.project_id, stack=self.stack
+        ).first()
         if project_stack:
             current_devs = (
                 ProjectDeveloper.objects.filter(project=self.project, stack=self.stack)
