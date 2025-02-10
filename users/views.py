@@ -42,8 +42,8 @@ class UserListView(generics.ListAPIView):
 
     def get_queryset(self):
         if self.request.user.is_tech_leader():
-            return User.objects.all()
-        return User.objects.filter(id=self.request.user.id)
+            return User.objects.all().order_by("id")
+        return User.objects.filter(id=self.request.user.id).order_by("id")
 
 
 class UserDetailView(generics.RetrieveUpdateAPIView):

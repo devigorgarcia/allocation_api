@@ -45,6 +45,9 @@ class User(AbstractUser):
 
     objects = CustomUserManager()
 
+    class Meta:
+        ordering = ["id"]
+
     def is_tech_leader(self):
         return self.user_type == "TL"
 
