@@ -1,6 +1,9 @@
 from django.http import Http404
-from rest_framework import generics
+from django.shortcuts import get_object_or_404
+from rest_framework import viewsets, status
+from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
+
 from .filters import ProjectFilter, ProjectDeveloperFilter, ProjectStackFilter
 from core.exceptions import ProjectValidationError
 from .models import Project, ProjectDeveloper, ProjectStack
@@ -11,10 +14,18 @@ from .serializers import (
 )
 from .permissions import IsProjectTechLeader, CanViewProject
 from .mixins import ProjectPermissionMixin, ProjectAuditMixin
+from .services import (
+    ProjectDeveloperService,
+)  # Service para criação/atualização de ProjectDeveloper
 
 
-# Views para Projeto
-class ProjectListCreateView(ProjectAuditMixin, generics.ListCreateAPIView):
+# ViewSet para Projetos
+class ProjectViewSet(ProjectAuditMixin, viewsets.ModelViewSet):
+    """
+    Gerencia operações (list, retrieve, create, update, destroy) para Projetos.
+    O queryset é filtrado conforme o usuário (staff, tech leader ou desenvolvedor alocado).
+    """
+
     serializer_class = ProjectSerializer
     permission_classes = [CanViewProject]
     filter_backends = [DjangoFilterBackend]
@@ -33,166 +44,98 @@ class ProjectListCreateView(ProjectAuditMixin, generics.ListCreateAPIView):
         serializer.save(tech_leader=self.request.user)
 
 
-class ProjectDetailView(
-    ProjectPermissionMixin, ProjectAuditMixin, generics.RetrieveUpdateDestroyAPIView
-):
+# ViewSet para Alocações de Desenvolvedores em Projetos
+class ProjectDeveloperViewSet(ProjectAuditMixin, viewsets.ModelViewSet):
     """
-    View para operações em um projeto específico.
-    GET: Obtém detalhes do projeto
-    PUT/PATCH: Atualiza o projeto
-    DELETE: Remove o projeto
-    """
-
-    serializer_class = ProjectSerializer
-    permission_classes = [CanViewProject]
-    filter_backends = [DjangoFilterBackend]
-    filterset_class = ProjectDeveloperFilter
-    queryset = Project.objects.all()
-    lookup_field = "pk"
-
-    def get_queryset(self):
-        return Project.objects.prefetch_related(
-            "projectdeveloper_set", "projectstack_set", "tech_leader"
-        )
-
-
-# Views para Desenvolvedores do Projeto
-class ProjectDeveloperCreateView(ProjectAuditMixin, generics.CreateAPIView):
-    """
-    View para alocar um desenvolvedor a um projeto.
-    POST: Adiciona um desenvolvedor ao projeto
+    Gerencia as alocações de desenvolvedores em um projeto específico.
+    As operações (create, update, retrieve, destroy) usam o service para
+    orquestrar a criação e atualização, garantindo que as validações do modelo
+    sejam executadas.
     """
 
     serializer_class = ProjectDeveloperSerializer
     permission_classes = [IsProjectTechLeader]
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = ProjectDeveloperFilter
+
+    def get_queryset(self):
+        project_id = self.kwargs.get("project_id")
+        return ProjectDeveloper.objects.filter(project_id=project_id).select_related(
+            "developer", "stack", "project"
+        )
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        project_id = self.kwargs.get("project_id")
-
-        try:
-            project = Project.objects.get(pk=project_id)
-            context["project"] = project
-        except Project.DoesNotExist:
-            raise Http404(f"Projeto com ID {project_id} não encontrado")
-
+        project = get_object_or_404(Project, pk=self.kwargs.get("project_id"))
+        context["project"] = project
         return context
 
-    def perform_create(self, serializer):
-        project = Project.objects.get(pk=self.kwargs["project_id"])
-
-        # Verifica se o usuário atual é o Tech Leader do projeto
-        if project.tech_leader != self.request.user:
+    def create(self, request, *args, **kwargs):
+        project = get_object_or_404(Project, pk=self.kwargs.get("project_id"))
+        if project.tech_leader != request.user:
             raise ProjectValidationError(
                 {"message": "Apenas o Tech Leader pode alocar desenvolvedores"}
             )
 
-        serializer.save(project=project)
+        serializer = self.get_serializer(
+            data=request.data, context={"project": project}
+        )
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+        # INJEÇÃO dos campos de auditoria:
+        validated_data["created_by"] = request.user
+        validated_data["updated_by"] = request.user
+
+        instance = ProjectDeveloperService.create_project_developer(validated_data)
+        output_serializer = self.get_serializer(instance)
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        project = get_object_or_404(Project, pk=self.kwargs.get("project_id"))
+        instance = self.get_object()
+        serializer = self.get_serializer(
+            instance, data=request.data, partial=partial, context={"project": project}
+        )
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+        # Atualiza o campo updated_by com o usuário logado:
+        validated_data["updated_by"] = request.user
+
+        updated_instance = ProjectDeveloperService.update_project_developer(
+            instance, validated_data
+        )
+        output_serializer = self.get_serializer(updated_instance)
+        return Response(output_serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class ProjectDeveloperListView(ProjectAuditMixin, generics.ListAPIView):
+# ViewSet para Stacks Necessárias no Projeto
+class ProjectStackViewSet(ProjectAuditMixin, viewsets.ModelViewSet):
     """
-    View para listar desenvolvedores de um projeto específico.
-    GET: Lista todos os desenvolvedores alocados no projeto
+    Gerencia as stacks necessárias de um projeto.
+    Apenas o Tech Leader (ou quem tiver a permissão adequada) pode criar/atualizar.
     """
 
-    serializer_class = ProjectDeveloperSerializer
-    permission_classes = [CanViewProject]
+    serializer_class = ProjectStackSerializer
+    permission_classes = [IsProjectTechLeader]
     filter_backends = [DjangoFilterBackend]
     filterset_class = ProjectStackFilter
 
     def get_queryset(self):
         project_id = self.kwargs.get("project_id")
-        return ProjectDeveloper.objects.filter(project_id=project_id)
-
-
-class ProjectDeveloperDetailView(
-    ProjectAuditMixin, generics.RetrieveUpdateDestroyAPIView
-):
-    """
-    View para gerenciar a alocação específica de um desenvolvedor.
-    GET: Obtém detalhes da alocação
-    PUT/PATCH: Atualiza a alocação
-    DELETE: Remove o desenvolvedor do projeto
-    """
-
-    serializer_class = ProjectDeveloperSerializer
-    permission_classes = [IsProjectTechLeader]
-    lookup_field = "developer"
-
-    def get_queryset(self):
-        project_id = self.kwargs.get("project_id")
-        queryset = ProjectDeveloper.objects.filter(project_id=project_id)
-
-        # um developer_id específico
-        if "developer" in self.kwargs:
-            queryset = queryset.filter(developer_id=self.kwargs["developer"])
-
-        return queryset.select_related("developer", "stack", "project")
-
-    def get_object(self):
-        queryset = self.get_queryset()
-
-        # rota com developer_id
-        if "developer" in self.kwargs:
-            obj = queryset.first()
-            if not obj:
-                raise Http404(
-                    f"Nenhuma alocação encontrada para o desenvolvedor {self.kwargs['developer']} "
-                    f"no projeto {self.kwargs['project_id']}"
-                )
-            return obj
-
-        # rota com pk
-        if "pk" in self.kwargs:
-            obj = queryset.filter(pk=self.kwargs["pk"]).first()
-            if not obj:
-                raise Http404(
-                    f"Alocação {self.kwargs['pk']} não encontrada no "
-                    f"projeto {self.kwargs['project_id']}"
-                )
-            return obj
-
-        return super().get_object()
-
-    def perform_destroy(self, instance):
-        """
-        Customiza o processo de remoção para adicionar log
-        """
-
-        instance.delete()
-
-
-# Views para Stacks do Projeto
-class ProjectStackCreateView(ProjectAuditMixin, generics.CreateAPIView):
-    """
-    View para adicionar uma stack necessária ao projeto.
-    POST: Adiciona uma nova stack ao projeto
-    """
-
-    serializer_class = ProjectStackSerializer
-    permission_classes = [IsProjectTechLeader]
+        return ProjectStack.objects.filter(project_id=project_id)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        context["project"] = Project.objects.get(pk=self.kwargs["project_id"])
+        project = get_object_or_404(Project, pk=self.kwargs.get("project_id"))
+        context["project"] = project
         return context
 
     def perform_create(self, serializer):
-        project_id = self.kwargs.get("project_id")
-        project = Project.objects.get(id=project_id)
+        project = get_object_or_404(Project, pk=self.kwargs.get("project_id"))
         serializer.save(project=project)
-
-
-class ProjectStackListView(ProjectAuditMixin, generics.ListAPIView):
-    """
-    View para listar as stacks necessárias em um projeto.
-    GET: Lista todas as stacks do projeto
-    """
-
-    serializer_class = ProjectStackSerializer
-    permission_classes = [CanViewProject]
-
-    def get_queryset(self):
-        project_id = self.kwargs.get("project_id")
-        return ProjectStack.objects.filter(project_id=project_id)

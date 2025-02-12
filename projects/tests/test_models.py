@@ -10,7 +10,7 @@ from core.exceptions import ProjectValidationError
 class ProjectModelTest(TestCase):
     def setUp(self):
         # Cria um Tech Leader e o atribui a uma stack
-        self.tech_leader = User.objects.create_user(
+        self.tech_leader, created = User.objects.get_or_create(
             email="tl@example.com", password="password123", user_type="TL"
         )
         self.stack1 = Stack.objects.create(name="Django", description="Web framework")
@@ -54,7 +54,7 @@ class ProjectModelTest(TestCase):
 
     def test_project_clean_missing_tech_leader_stacks(self):
         # Cria um tech leader que não possui nenhuma stack atribuída
-        tl_no_stack = User.objects.create_user(
+        tl_no_stack, created = User.objects.get_or_create(
             email="tl2@example.com", password="password123", user_type="TL"
         )
         project = Project(
@@ -78,10 +78,10 @@ class ProjectModelTest(TestCase):
 class ProjectDeveloperModelTest(TestCase):
     def setUp(self):
         # Cria um Tech Leader e um Desenvolvedor
-        self.tech_leader = User.objects.create_user(
+        self.tech_leader, created = User.objects.get_or_create(
             email="tl@example.com", password="password123", user_type="TL"
         )
-        self.developer = User.objects.create_user(
+        self.developer, created = User.objects.get_or_create(
             email="dev@example.com",
             password="password123",
             user_type="DEV",
@@ -141,7 +141,6 @@ class ProjectDeveloperModelTest(TestCase):
         self.assertIn("stack", cm.exception.message_dict)
 
     def test_verify_developer_availability_exceeds_hours(self):
-        # Cria uma alocação existente que utiliza muitas horas
         ProjectDeveloper.objects.create(
             project=self.project,
             developer=self.developer,
@@ -149,6 +148,8 @@ class ProjectDeveloperModelTest(TestCase):
             stack=self.stack1,
             start_date=date.today() + timedelta(days=10),
             end_date=date.today() + timedelta(days=40),
+            created_by=self.tech_leader,  # Adicionando campo required
+            updated_by=self.tech_leader,  # Adicionando campo required
         )
         pd = ProjectDeveloper(
             project=self.project,
@@ -158,14 +159,13 @@ class ProjectDeveloperModelTest(TestCase):
             start_date=date.today() + timedelta(days=10),
             end_date=date.today() + timedelta(days=40),
         )
-        available, message = pd.verify_developer_availability()
-        self.assertFalse(available)
-        self.assertIn("excederá o limite de horas", message)
+        errors = pd.validate_developer_availability()
+        self.assertIn("hours_per_month", errors)
 
 
 class ProjectStackModelTest(TestCase):
     def setUp(self):
-        self.tech_leader = User.objects.create_user(
+        self.tech_leader, created = User.objects.get_or_create(
             email="tl@example.com", password="password123", user_type="TL"
         )
         self.stack1 = Stack.objects.create(name="Vue", description="Frontend framework")
@@ -192,7 +192,7 @@ class ProjectStackModelTest(TestCase):
 
 class ProjectChangeLogModelTest(TestCase):
     def setUp(self):
-        self.tech_leader = User.objects.create_user(
+        self.tech_leader, created = User.objects.get_or_create(
             email="tl@example.com", password="password123", user_type="TL"
         )
         self.project = Project.objects.create(

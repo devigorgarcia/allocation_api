@@ -7,7 +7,10 @@ class IsProjectTechLeader(permissions.BasePermission):
     """
 
     def has_object_permission(self, request, view, obj):
-        return obj.tech_leader == request.user or request.user.is_superuser
+        tech_leader = getattr(obj, "tech_leader", None)
+        if tech_leader is None and hasattr(obj, "project"):
+            tech_leader = obj.project.tech_leader
+        return tech_leader == request.user or request.user.is_superuser
 
 
 class CanViewProject(permissions.BasePermission):

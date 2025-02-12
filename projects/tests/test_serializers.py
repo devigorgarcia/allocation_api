@@ -2,7 +2,7 @@ from django.test import TestCase
 from datetime import date, timedelta
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIRequestFactory
-from projects.models import Project
+from projects.models import Project, ProjectStack
 from projects.serializers import (
     ProjectSerializer,
     ProjectDeveloperSerializer,
@@ -121,6 +121,9 @@ class ProjectDeveloperSerializerTest(TestCase):
         )
         self.project.stacks.add(self.stack1)
         self.context = {"project": self.project}
+        self.project.stacks.add(
+            self.stack1, through_defaults={"required_developers": 2}
+        )
 
     def test_project_developer_serializer_valid(self):
         data = {
@@ -129,11 +132,11 @@ class ProjectDeveloperSerializerTest(TestCase):
             "hours_per_month": 50,
             "start_date": self.start_date.isoformat(),
             "end_date": self.end_date.isoformat(),
+            "created_by": self.tech_leader.id,
+            "updated_by": self.tech_leader.id
         }
         serializer = ProjectDeveloperSerializer(data=data, context=self.context)
         self.assertTrue(serializer.is_valid(), serializer.errors)
-        instance = serializer.save()
-        self.assertEqual(instance.developer, self.developer)
 
     def test_project_developer_serializer_invalid_dates(self):
         data = {

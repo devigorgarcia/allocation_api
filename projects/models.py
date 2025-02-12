@@ -69,6 +69,9 @@ class Project(AuditableMixin):
         help_text="Status atual do projeto (Planejamento, Em Andamento, Concluído ou Em Pausa)",
     )
 
+    class Meta:
+        ordering = ["name"]
+
     def __str__(self):
         return f"{self.name} - {self.tech_leader.email}"
 
@@ -134,94 +137,119 @@ class ProjectDeveloper(AuditableMixin):
         default=default_end_date,
     )
 
-    def verify_developer_availability(self):
-        """
-        Verifica se o desenvolvedor tem disponibilidade de horas no período especificado.
-        Esta função analisa mês a mês para garantir que não haja sobrecarga em nenhum momento.
-        """
+    class Meta:
+        ordering = ["start_date"]
 
-        # Busca todas as outras alocações do desenvolvedor que se sobrepõem ao período
+    def validate_dates(self):
+        """
+        Valida se as datas de início e término estão corretas.
+        - A data de término deve ser posterior à data de início.
+        - Em criação, a data de início não pode estar no passado.
+        """
+        errors = {}
+        if self.start_date > self.end_date:
+            errors["end_date"] = "A data de término deve ser posterior à data de início"
+        if not self.pk and self.start_date < timezone.localdate():
+            errors["start_date"] = "A data de início não pode ser no passado"
+        return errors
+
+    def validate_duplicate_allocation(self):
+        """
+        Valida se o desenvolvedor já não está alocado no mesmo projeto.
+        """
+        errors = {}
+        if self.developer and self.project:
+            qs = ProjectDeveloper.objects.filter(
+                project=self.project, developer=self.developer
+            )
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                errors["developer"] = "Este desenvolvedor já está alocado neste projeto"
+        return errors
+
+    def validate_developer_stacks(self):
+        """
+        Valida se o desenvolvedor possui a stack que está sendo alocada.
+        """
+        errors = {}
+        if (
+            self.stack
+            and not self.developer.user_stacks.filter(stack=self.stack).exists()
+        ):
+            errors["stack"] = f"O desenvolvedor não possui a stack {self.stack.name}"
+        return errors
+
+    def validate_stack_capacity(self):
+        """
+        Valida se o projeto ainda possui vagas para a stack selecionada.
+        """
+        errors = {}
+        # Importação local para evitar import circular
+        from projects.models import ProjectStack
+
+        project_stack = ProjectStack.objects.filter(
+            project=self.project, stack=self.stack
+        ).first()
+        if project_stack:
+            current_devs = ProjectDeveloper.objects.filter(
+                project=self.project, stack=self.stack
+            )
+            if self.pk:
+                current_devs = current_devs.exclude(pk=self.pk)
+            if current_devs.count() >= project_stack.required_developers:
+                errors["stack"] = (
+                    f"O projeto já possui o número necessário de desenvolvedores "
+                    f"({project_stack.required_developers}) para a stack {self.stack.name}"
+                )
+        return errors
+
+    def validate_developer_availability(self):
+        errors = {}
         overlapping_allocations = ProjectDeveloper.objects.filter(
             developer=self.developer,
             start_date__lte=self.end_date,
             end_date__gte=self.start_date,
-        ).exclude(
-            id=self.id
-        )  # Exclui a alocação atual em caso de atualização
+        )
+        if self.pk:
+            overlapping_allocations = overlapping_allocations.exclude(pk=self.pk)
 
-        # Para cada mês no período, verifica a soma das horas
         current_date = self.start_date
         while current_date <= self.end_date:
-            # Calcula o total de horas já alocadas para este mês
             month_allocations = sum(
                 allocation.hours_per_month
                 for allocation in overlapping_allocations
                 if allocation.start_date <= current_date <= allocation.end_date
             )
-
-            # Adiciona as horas desta nova alocação
             total_hours = month_allocations + self.hours_per_month
 
-            # Verifica se excede o limite mensal do desenvolvedor
             if total_hours > self.developer.monthly_hours:
-                return False, (
+                errors["hours_per_month"] = (
                     f"O desenvolvedor excederá o limite de horas em "
-                    f"{current_date.strftime('%B/%Y')}. "
-                    f"Total previsto: {total_hours}h, "
+                    f"{current_date.strftime('%B/%Y')}. Total previsto: {total_hours}h, "
                     f"Limite mensal: {self.developer.monthly_hours}h"
                 )
+                break
 
-            # Avança para o próximo mês
             current_date = (current_date + relativedelta(months=1)).replace(day=1)
 
-        return True, "Dev disponivel"
+        return errors
 
     def clean(self):
-        from django.core.exceptions import ValidationError
+        """
+        Agrega todas as validações de negócio executando os métodos específicos.
+        Se houver algum erro, levanta ValidationError.
+        """
+        errors = {}
+        errors.update(self.validate_dates())
+        errors.update(self.validate_duplicate_allocation())
+        errors.update(self.validate_developer_stacks())
+        errors.update(self.validate_stack_capacity())
+        errors.update(self.validate_developer_availability())
 
-        if self.hours_per_month is None:
-            self.hours_per_month = 0
+        if errors:
+            raise ValidationError(errors)
 
-        if self.start_date > self.end_date:
-            raise ValidationError(
-                {"end_date": "A data de término deve ser posterior à data de início"}
-            )
-        if self.start_date < date.today():
-            raise ValidationError(
-                {"start_date": "A data de início não pode ser no passado"}
-            )
-
-        if not self.pk and self.start_date < date.today():
-            raise ValidationError(
-                {"start_date": "A data de início não pode ser no passado"}
-            )
-
-        if not self.developer.user_stacks.filter(stack=self.stack).exists():
-            raise ValidationError(
-                {"stack": f"O desenvolvedor não possui a stack {self.stack.name}"}
-            )
-        is_available, message = self.verify_developer_availability()
-        if not is_available:
-            raise ValidationError({"hours_per_month": message})
-        project_stack = ProjectStack.objects.filter(
-            project_id=self.project_id, stack=self.stack
-        ).first()
-        if project_stack:
-            current_devs = (
-                ProjectDeveloper.objects.filter(project=self.project, stack=self.stack)
-                .exclude(id=self.id)
-                .count()
-            )
-            if current_devs >= project_stack.required_developers:
-                raise ValidationError(
-                    {
-                        "stack": (
-                            f"O projeto já possui o número necessário de "
-                            f"desenvolvedores ({project_stack.required_developers}) "
-                            f"para a stack {self.stack.name}"
-                        )
-                    }
-                )
         super().clean()
 
     def save(self, *args, **kwargs):
@@ -250,6 +278,7 @@ class ProjectStack(models.Model):
 
     class Meta:
         unique_together = ["project", "stack"]
+        ordering = ["stack__name"]
 
 
 class ProjectChangeLog(models.Model):

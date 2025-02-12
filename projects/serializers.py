@@ -1,8 +1,8 @@
 from datetime import timedelta
 from django.utils import timezone
-from django.db import models
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
-from projects.validators import ProjectDeveloperValidator
+from django.db import models
 from users.serializers import UserSerializer
 from .models import Project, ProjectDeveloper, ProjectStack
 
@@ -67,23 +67,25 @@ class ProjectDeveloperSerializer(serializers.ModelSerializer):
     def validate(self, data):
         """
         Realiza todas as validações necessárias para a alocação de um desenvolvedor.
+        Agora, como as regras de negócio foram movidas para o modelo (no método clean()),
+        esta função prepara os dados e instancia um objeto temporário para chamar full_clean().
         """
         data = super().validate(data)
 
+        # Obtém o projeto do contexto ou da instância
         project = self.context.get("project") or (
             self.instance and self.instance.project
         )
-
         if not project:
             raise serializers.ValidationError(
                 {
                     "project": "Erro interno: Projeto não encontrado no contexto do serializer"
                 }
             )
-
         data["project"] = project
 
         if self.instance:
+            # Se for atualização, preserva valores existentes caso não sejam enviados
             data["developer"] = data.get("developer", self.instance.developer)
             data["stack"] = data.get("stack", self.instance.stack)
             data["start_date"] = data.get("start_date", self.instance.start_date)
@@ -94,39 +96,15 @@ class ProjectDeveloperSerializer(serializers.ModelSerializer):
         else:
             # Se for criação, define valores default para os campos ausentes
             data.setdefault("start_date", timezone.localdate())
-            from datetime import timedelta
-
             data.setdefault("end_date", timezone.localdate() + timedelta(days=30))
             data.setdefault("hours_per_month", 0)
 
+        # Cria uma instância temporária (ou usa a instância existente) para chamar o full_clean()
+        instance = self.instance if self.instance else ProjectDeveloper(**data)
         try:
-            validator = ProjectDeveloperValidator(self.instance, project)
-
-            validations = [
-                validator.validate_developer_already_allocated(data.get("developer")),
-                validator.validate_developer_stacks(data.get("developer")),
-                validator.validate_dates(data.get("start_date"), data.get("end_date")),
-                validator.validate_stack_capacity(data.get("stack")),
-            ]
-
-            # Verifica os resultados das validações
-            for is_valid, error in validations:
-                if not is_valid:
-                    raise serializers.ValidationError(error)
-
-            # Validação de disponibilidade
-            is_available, error = validator.validate_developer_availability(
-                data.get("developer"),
-                data.get("hours_per_month"),
-                data.get("start_date"),
-                data.get("end_date"),
-            )
-            if not is_available:
-                raise serializers.ValidationError(error)
-
-        except ValueError as e:
-            # Melhora a mensagem de erro para ser mais específica
-            raise serializers.ValidationError({"error": f"Erro de validação: {str(e)}"})
+            instance.full_clean()
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(e.message_dict)
 
         return data
 
@@ -176,8 +154,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     def get_total_hours(self, obj):
         """
-        Calcula o total de horas alocadas no projeto
-        somando as horas de todos os desenvolvedores.
+        Calcula o total de horas alocadas no projeto somando as horas de todos os desenvolvedores.
         """
         return (
             obj.projectdeveloper_set.aggregate(total=models.Sum("hours_per_month"))[
@@ -204,12 +181,10 @@ class ProjectSerializer(serializers.ModelSerializer):
                 )
 
         tech_leader = data.get("tech_leader")
-
         if tech_leader is None and self.instance:
             tech_leader = self.instance.tech_leader
 
         if tech_leader:
-
             if not tech_leader.is_tech_leader():
                 raise serializers.ValidationError(
                     {"tech_leader": "O usuário selecionado não é um Tech Leader"}
@@ -221,13 +196,12 @@ class ProjectSerializer(serializers.ModelSerializer):
                 tl_stacks = set(
                     tech_leader.user_stacks.all().values_list("stack", flat=True)
                 )
-
                 missing_stacks = project_stacks - tl_stacks
                 if missing_stacks:
-                    stack_names = [stack.name for stack in missing_stacks]
+                    # Opcional: recuperar os nomes das stacks faltantes se necessário
                     raise serializers.ValidationError(
                         {
-                            "tech_leader": f"Tech Leader não possui todas as stacks necessárias: {', '.join(stack_names)}"
+                            "tech_leader": "Tech Leader não possui todas as stacks necessárias"
                         }
                     )
 
