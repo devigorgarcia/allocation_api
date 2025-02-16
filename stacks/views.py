@@ -6,6 +6,7 @@ from .models import Stack, UserStack
 from .serializers import AddUserStackSerializer, StackSerializer, UserStackSerializer
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
+from .permissions import CanAssignStackPermission
 
 
 class StackListCreateView(generics.ListCreateAPIView):
@@ -25,7 +26,7 @@ class StackListCreateView(generics.ListCreateAPIView):
 
 class UserStackListCreateView(generics.ListCreateAPIView):
     serializer_class = UserStackSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CanAssignStackPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = UserStackFilter
 
@@ -41,7 +42,37 @@ class UserStackListCreateView(generics.ListCreateAPIView):
         )
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        user = self.request.user
+        instance = serializer.save(user=user)
+        return instance
+
+    def create(self, request, *args, **kwargs):
+        """
+        Processo de criação com mensagens personalizadas.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = self.perform_create(serializer)
+
+        if instance is None:
+            return Response(
+                {"status": "error", "message": "Failed to create UserStack instance."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            {
+                "status": "success",
+                "data": {
+                    "stack_info": serializer.data,
+                    "assigned_to": instance.user.email,
+                    "assigned_by": request.user.email,
+                },
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
 
 
 class UserStackDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -54,7 +85,7 @@ class UserStackDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class AddUserStackView(generics.CreateAPIView):
     serializer_class = AddUserStackSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CanAssignStackPermission]
 
     def perform_create(self, serializer):
         """

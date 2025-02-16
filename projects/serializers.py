@@ -61,14 +61,20 @@ class ProjectDeveloperSerializer(serializers.ModelSerializer):
             "hours_per_month",
             "start_date",
             "end_date",
+            "created_by",
+            "updated_by",
         ]
-        read_only_fields = ["developer_email", "developer_name", "stack_name"]
+        read_only_fields = [
+            "developer_email",
+            "developer_name",
+            "stack_name",
+            "created_by",
+            "updated_by",
+        ]
 
     def validate(self, data):
         """
         Realiza todas as validações necessárias para a alocação de um desenvolvedor.
-        Agora, como as regras de negócio foram movidas para o modelo (no método clean()),
-        esta função prepara os dados e instancia um objeto temporário para chamar full_clean().
         """
         data = super().validate(data)
 

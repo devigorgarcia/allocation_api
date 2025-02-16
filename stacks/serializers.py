@@ -19,7 +19,6 @@ class UserStackSerializer(serializers.ModelSerializer):
         model = UserStack
         fields = [
             "id",
-            "user",
             "user_email",
             "user_username",
             "user_type",

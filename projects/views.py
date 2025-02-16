@@ -13,10 +13,10 @@ from .serializers import (
     ProjectStackSerializer,
 )
 from .permissions import IsProjectTechLeader, CanViewProject
-from .mixins import ProjectPermissionMixin, ProjectAuditMixin
+from .mixins import ProjectAuditMixin
 from .services import (
     ProjectDeveloperService,
-)  # Service para criação/atualização de ProjectDeveloper
+)
 
 
 # ViewSet para Projetos
